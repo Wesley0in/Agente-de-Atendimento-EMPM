@@ -1,11 +1,10 @@
+import re
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import (
-    CSVLoader,
-    PyPDFDirectoryLoader,
-)
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -13,53 +12,62 @@ load_dotenv()
 
 PASTA_BASE = Path("base")
 PASTA_DB = "db"
+COLECAO = "politicas"
+MODELO_EMBEDDING = "text-embedding-3-small"
+
+# Cabeçalho/rodapé que se repetem em todas as páginas do manual
+RUIDOS = [
+    r"Empório da Música Manual de Políticas e Procedimentos",
+    r"Página \d+",
+]
 
 
-def carregar_documentos():
-    documentos = []
+def limpar_texto(texto: str) -> str:
+    for padrao in RUIDOS:
+        texto = re.sub(padrao, "", texto)
+    texto = re.sub(r"\n{3,}", "\n\n", texto)  # colapsa linhas em branco
+    return texto.strip()
 
-    # Carrega e divide o texto dos PDFs em partes menores.
-    loader_pdf = PyPDFDirectoryLoader(str(PASTA_BASE))
-    documentos_pdf = loader_pdf.load()
+
+def carregar_politicas():
+    # glob evita problema de acento (í) no nome do arquivo no macOS
+    arquivos_pdf = list(PASTA_BASE.glob("*.pdf"))
+    if not arquivos_pdf:
+        return []
+
+    paginas = []
+    for arquivo in arquivos_pdf:
+        for pagina in PyPDFLoader(str(arquivo)).load():
+            pagina.page_content = limpar_texto(pagina.page_content)
+            pagina.metadata["fonte"] = "manual_politicas"
+            paginas.append(pagina)
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,
-        chunk_overlap=500,
-        length_function=len,
+        chunk_size=800,
+        chunk_overlap=100,
+        separators=["\n\n", "\n", ". ", " "],
         add_start_index=True,
     )
-
-    documentos.extend(splitter.split_documents(documentos_pdf))
-
-    # Carrega cada linha dos CSVs como um documento.
-    for arquivo in PASTA_BASE.rglob("*.csv"):
-        loader_csv = CSVLoader(
-            file_path=str(arquivo),
-            autodetect_encoding=True,
-        )
-        documentos.extend(loader_csv.load())
-
-    return documentos
+    return splitter.split_documents(paginas)
 
 
 def criar_db():
-    documentos = carregar_documentos()
-
-    if not documentos:
-        print(f"Nenhum documento encontrado em {PASTA_BASE}.")
+    chunks = carregar_politicas()
+    if not chunks:
+        print(f"Nenhum PDF encontrado em '{PASTA_BASE}'.")
         return
 
-    print(f"Total de documentos e chunks: {len(documentos)}")
-
-    embeddings = OpenAIEmbeddings()
+    # Recria do zero para não duplicar documentos
+    if Path(PASTA_DB).exists():
+        shutil.rmtree(PASTA_DB)
 
     Chroma.from_documents(
-        documents=documentos,
-        embedding=embeddings,
+        documents=chunks,
+        embedding=OpenAIEmbeddings(model=MODELO_EMBEDDING),
         persist_directory=PASTA_DB,
+        collection_name=COLECAO,
     )
-
-    print(f"Base vetorial criada em '{PASTA_DB}'.")
+    print(f"{len(chunks)} chunks do manual indexados em '{PASTA_DB}'.")
 
 
 if __name__ == "__main__":
