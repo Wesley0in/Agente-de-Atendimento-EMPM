@@ -1,4 +1,6 @@
 import re
+import unicodedata
+from typing import Literal
 from langchain.tools import tool
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
@@ -10,16 +12,31 @@ _db = Chroma(persist_directory=PASTA_DB, collection_name=COLECAO,
 
 def _digitos(s): return re.sub(r"\D", "", str(s))
 
+def _norm(s):
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]", "", s)
+
+Categoria = Literal["Violões", "Guitarras", "Baixos", "Baterias e Percussão",
+                    "Teclados e Pianos", "Ukuleles"]
+
 @tool
-def buscar_produtos(termo: str = "", categoria: str = "", preco_max: float | None = None) -> str:
+def buscar_produtos(termo: str = "", categoria: Categoria | None = None,
+                    preco_max: float | None = None, apenas_promocao: bool = False) -> str:
     """Busca instrumentos no catálogo (preço, estoque, promoção).
-    Use para perguntas sobre produtos, preços, disponibilidade ou faixa de preço."""
-    df = produtos[produtos.status != "discontinued"]
-    if termo: df = df[df.name.str.contains(termo, case=False)]
-    if categoria: df = df[df.categoria.str.contains(categoria, case=False)]
+    Use para perguntas sobre produtos, preços, disponibilidade, faixa de preço ou promoções.
+    - termo: marca ou modelo (ex: 'Takamine', 'Yamaha C40'). NÃO use para tipo de instrumento.
+    - categoria: tipo de instrumento.
+    - apenas_promocao: True para listar só produtos com promoção ativa."""
+    df = produtos
+    if termo:
+        t = _norm(termo)
+        df = df[df.name.map(_norm).str.contains(t) | df.description.map(_norm).str.contains(t)]
+    if categoria: df = df[df.categoria.map(_norm) == _norm(categoria)]
     if preco_max: df = df[df.preco_final <= preco_max]
-    if df.empty: return "Nenhum produto encontrado."
-    return df[["name","price_brl","discount_percent","preco_final","stock_quantity","status"]].head(15).to_string()
+    if apenas_promocao: df = df[df.discount_percent.notna()]
+    if df.empty: return "Nenhum produto encontrado com esses filtros."
+    return df[["name","categoria","price_brl","discount_percent","preco_final",
+               "stock_quantity","status"]].head(20).to_string()
 
 @tool
 def consultar_pedido(order_id: int, email_ou_telefone: str) -> str:
