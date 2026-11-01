@@ -15,7 +15,6 @@ PASTA_DB = "db"
 COLECAO = "politicas"
 MODELO_EMBEDDING = "text-embedding-3-small"
 
-# Cabeçalho/rodapé que se repetem em todas as páginas do manual
 RUIDOS = [
     r"Empório da Música Manual de Políticas e Procedimentos",
     r"Página \d+",
@@ -30,7 +29,7 @@ def limpar_texto(texto: str) -> str:
 
 
 def carregar_politicas():
-    # glob evita problema de acento (í) no nome do arquivo no macOS
+    # glob evita problema de acento (í)
     arquivos_pdf = list(PASTA_BASE.glob("*.pdf"))
     if not arquivos_pdf:
         return []
